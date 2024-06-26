@@ -63,8 +63,8 @@ func updateConfigurationStatus(ctx context.Context, r *reconciler, s *systemStat
 }
 
 func getExternalAccessFields(ctx context.Context, r *reconciler, s *systemState) (fieldsToUpdate, error) {
-	if s.instance.Spec.ExternalAccess == nil ||
-		s.instance.Spec.ExternalAccess.Enabled == nil ||
+	if s.instance.Spec.ExternalAccess != nil &&
+		s.instance.Spec.ExternalAccess.Enabled != nil &&
 		!*s.instance.Spec.ExternalAccess.Enabled {
 		// reset external access fields to empty values
 		return fieldsToUpdate{
@@ -75,7 +75,8 @@ func getExternalAccessFields(ctx context.Context, r *reconciler, s *systemState)
 
 	externalPushAddress, err := resolveRegistryHost(ctx, r, s)
 	if err != nil {
-		return nil, err
+		// gateway is not operational but we should continue the reconciliation with old status configuration
+		return nil, nil
 	}
 
 	return fieldsToUpdate{

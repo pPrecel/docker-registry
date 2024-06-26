@@ -7,6 +7,7 @@ import (
 	"github.com/kyma-project/docker-registry/components/operator/api/v1alpha1"
 	"github.com/kyma-project/docker-registry/components/operator/internal/chart"
 	"github.com/kyma-project/docker-registry/components/operator/internal/registry"
+	"github.com/kyma-project/docker-registry/components/operator/internal/warning"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	networkingv1beta1 "istio.io/api/networking/v1beta1"
@@ -21,15 +22,21 @@ import (
 )
 
 func Test_sFnAccessConfiguration(t *testing.T) {
+	testScheme := runtime.NewScheme()
+	require.NoError(t, istiov1beta1.AddToScheme(testScheme))
+	require.NoError(t, clientgoscheme.AddToScheme(testScheme))
+
 	t.Run("setup node port only when registry secret does not exist", func(t *testing.T) {
 		s := &systemState{
-			instance:         v1alpha1.DockerRegistry{},
-			statusSnapshot:   v1alpha1.DockerRegistryStatus{},
-			flagsBuilder:     chart.NewFlagsBuilder(),
-			nodePortResolver: registry.NewNodePortResolver(registry.RandomNodePort),
+			instance:                v1alpha1.DockerRegistry{},
+			statusSnapshot:          v1alpha1.DockerRegistryStatus{},
+			flagsBuilder:            chart.NewFlagsBuilder(),
+			nodePortResolver:        registry.NewNodePortResolver(registry.RandomNodePort),
+			externalAddressResolver: registry.NewExternalAccessResolver(),
+			warningBuilder:          warning.NewBuilder(),
 		}
 		r := &reconciler{
-			k8s: k8s{client: fake.NewClientBuilder().Build()},
+			k8s: k8s{client: fake.NewClientBuilder().WithScheme(testScheme).Build()},
 			log: zap.NewNop().Sugar(),
 		}
 		expectedFlags := map[string]interface{}{
@@ -49,6 +56,8 @@ func Test_sFnAccessConfiguration(t *testing.T) {
 		require.NoError(t, err)
 		require.Nil(t, result)
 		requireEqualFunc(t, sFnStorageConfiguration, next)
+
+		require.Equal(t, "Warning: .spec.externalAccess.enabled is true bit the kyma-gateway Gateway in the kyma-system namespace is not found", s.warningBuilder.Build())
 
 		require.EqualValues(t, expectedFlags, s.flagsBuilder.Build())
 		require.Equal(t, v1alpha1.StateProcessing, s.instance.Status.State)
@@ -98,12 +107,14 @@ func Test_sFnAccessConfiguration(t *testing.T) {
 					Namespace: "kyma",
 				},
 			},
-			statusSnapshot:   v1alpha1.DockerRegistryStatus{},
-			flagsBuilder:     chart.NewFlagsBuilder(),
-			nodePortResolver: registry.NewNodePortResolver(registry.RandomNodePort),
+			statusSnapshot:          v1alpha1.DockerRegistryStatus{},
+			flagsBuilder:            chart.NewFlagsBuilder(),
+			nodePortResolver:        registry.NewNodePortResolver(registry.RandomNodePort),
+			externalAddressResolver: registry.NewExternalAccessResolver(),
+			warningBuilder:          warning.NewBuilder(),
 		}
 		r := &reconciler{
-			k8s: k8s{client: fake.NewClientBuilder().WithObjects(registrySecret, registryDeploy).Build()},
+			k8s: k8s{client: fake.NewClientBuilder().WithScheme(testScheme).WithObjects(registrySecret, registryDeploy).Build()},
 			log: zap.NewNop().Sugar(),
 		}
 		expectedFlags := map[string]interface{}{
@@ -135,10 +146,6 @@ func Test_sFnAccessConfiguration(t *testing.T) {
 	})
 
 	t.Run("setup external access", func(t *testing.T) {
-		testScheme := runtime.NewScheme()
-		require.NoError(t, istiov1beta1.AddToScheme(testScheme))
-		require.NoError(t, clientgoscheme.AddToScheme(testScheme))
-
 		testGateway := &istiov1beta1.Gateway{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      "kyma-gateway",

@@ -9,6 +9,7 @@ import (
 	"github.com/kyma-project/docker-registry/components/operator/internal/istio"
 	"github.com/kyma-project/docker-registry/components/operator/internal/registry"
 	"github.com/pkg/errors"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
@@ -69,17 +70,23 @@ func setInternalAccessConfig(ctx context.Context, r *reconciler, s *systemState)
 }
 
 func setExternalAccessConfig(ctx context.Context, r *reconciler, s *systemState) error {
-	if s.instance.Spec.ExternalAccess == nil ||
-		s.instance.Spec.ExternalAccess.Enabled == nil ||
-		!*s.instance.Spec.ExternalAccess.Enabled {
-		// skip if external access is not enabled
+	spec := s.instance.Spec
+	externalConfigured := spec.ExternalAccess != nil && spec.ExternalAccess.Enabled != nil
+
+	if externalConfigured && !*spec.ExternalAccess.Enabled {
+		// skip if its manually disabled
 		return nil
 	}
 
 	gateway := fmt.Sprintf("%s/%s", istio.GatewayNamespace, istio.GatewayName)
+
 	host, err := resolveRegistryHost(ctx, r, s)
-	if err != nil {
-		return errors.Wrap(err, "while fetching external access host")
+	if apierrors.IsNotFound(err) {
+		// set warning and continue reconciliation
+		s.warningBuilder.With(".spec.externalAccess.enabled is true but the kyma-gateway Gateway in the kyma-system namespace is not found")
+		return nil
+	} else if err != nil {
+		return err
 	}
 
 	s.flagsBuilder.WithVirtualService(
